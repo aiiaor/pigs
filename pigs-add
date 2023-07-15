@@ -1,0 +1,44 @@
+#!/bin/dash
+
+if [ ! -d ".pig" ]
+then
+	echo "$0: error: pigs repository directory .pig not found"
+	exit 1
+fi
+
+index_update=$(mktemp)
+trap 'rm ${index_update}' INT HUP QUIT TERM EXIT
+
+for file in "$@"
+do
+	if test -f "${file}"
+	then
+		cp "${file}" ".pig/object/file/${file}"
+	elif [ -f ".pig/object/file/${file}" ]
+	then
+		rm ".pig/object/file/${file}"
+		while IFS= read -r index_file
+		do
+			if [ "${index_file}" != "${file}" ]
+			then
+				echo "${index_file}" >> "${index_update}"
+			fi
+		done < .pig/index
+		cp "${index_update}" ".pig/index"
+	else
+		echo "$0: error: can not open '${file}'"
+		exit 1
+	fi
+	if [ -f ".pig/index" ]
+	then
+		exist_in_index=$(grep "${file}" ".pig/index")
+		if [ -z "${exist_in_index}" ]
+		then
+			echo "${file}" >> ".pig/index"
+		fi
+	else
+		echo "${file}" > ".pig/index"
+	fi
+done
+
+exit 0

@@ -1,0 +1,59 @@
+#!/bin/dash
+
+#VALIDATE GIT INIT
+if [ ! -d ".pig" ]
+then
+	echo "$0: error: pigs repository directory .pig not found"
+	exit 1
+fi
+
+#VALIDATE NUMBER OF INPUT
+if [ $# -ne 1 ]
+then
+	echo "usage: $0 <commit>:<filename>"
+	exit 1
+fi
+
+format_input=$(echo "$1"|grep -E "[0-9]+:.*")
+
+#VALIDATE INPUT FORMAT commit:file_name
+if [ -n "${format_input}" ]
+then
+	commit_id=$(echo "$1"|cut -f1 -d':')
+	file_name=$(echo "$1"|cut -f2 -d':')
+
+	#VALIDATE COMMIT ID FOLDER
+	if [ ! -d ".pig/object/commit/${commit_id}" ]
+	then
+		echo "$0: error: unknown commit '${commit_id}'"
+		exit 1
+	fi
+
+	if [ ! -f ".pig/object/commit/${commit_id}/${file_name}" ]
+	then
+		echo "$0: error: '${file_name}' not found in commit ${commit_id}"
+		exit 1
+	fi
+
+	cat ".pig/object/commit/${commit_id}/${file_name}"
+	exit 0
+fi
+
+format_input_2=$(echo "$1"|grep -E "^:.*$")
+
+#VALIDATE INPUT FORMAT :file_name
+if [ -n "${format_input_2}" ]
+then
+	file_name=$(echo "$1" | tr -d ':')
+	if [ ! -f ".pig/object/file/${file_name}" ]
+	then
+		echo "$0: error: '${file_name}' not found in index"
+		exit 1
+	fi
+
+	cat ".pig/object/file/${file_name}"
+	exit 0
+else
+	echo "usage: $0 <commit>:<filename>"
+	exit 1
+fi

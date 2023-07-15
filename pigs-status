@@ -1,0 +1,146 @@
+#!/bin/dash
+
+if [ ! -d ".pig" ]
+then
+	echo "$0: error: pigs repository directory .pig not found"
+	exit 1
+fi
+
+if [ "$#" -ne 0 ]
+then 
+	echo "usage: pigs-status"
+	exit 1
+fi
+
+
+tmp_ans=$(mktemp)
+trap 'rm ${tmp_ans}' INT HUP QUIT TERM EXIT
+
+current_branch=$(cat ".pig/HEAD")
+
+#GET LAST COMMIT FILES
+if [ -d ".pig/object/commit/0" ]
+then
+	last_commit_id=0
+	for commit_path in .pig/object/commit/* 
+	do
+		val=$(cut -f1 -d'|' "${commit_path}/commit_info" | head -n 1)
+		is_branch_exist=$(grep "branch: ${current_branch}" "${commit_path}/commit_info")
+		if [ "${last_commit_id}" -lt "${val}" ] && [ -n "${is_branch_exist}" ]
+		then
+			last_commit_id=${val}
+		fi
+	done
+	tmp_commit=$(mktemp)
+	trap 'rm ${tmp_commit}' INT HUP QUIT TERM EXIT
+
+	for file in .pig/object/commit/"${last_commit_id}"/*
+	do
+		file_name=$(basename "${file}")
+	    if [ "${file_name}" != "commit_info" ] && [ "${file_name}" != "*" ]
+	    then
+	    	echo "${file}" >> "${tmp_commit}"
+	    fi
+	done
+fi
+
+#GET INDEX FILES
+tmp_index=$(mktemp)
+trap 'rm ${tmp_index}' INT HUP QUIT TERM EXIT
+
+for file in .pig/object/file/*
+do
+	file_name=$(basename "${file}")
+	if [ "${file_name}" != "*" ]
+	then
+    	echo "${file}" >> "${tmp_index}"
+    fi
+done
+
+
+#GET ACTUAL FILE
+tmp_actual=$(mktemp)
+trap 'rm ${tmp_actual}' INT HUP QUIT TERM EXIT
+
+for file in *
+do
+	if [ "${file}" != "*" ]
+	then
+    	echo "${file}" >> "${tmp_actual}"
+    fi
+done
+
+
+while IFS= read -r actual_file
+do
+	actual_file_name=$(basename "${actual_file}")
+	if [ -f ".pig/object/file/${actual_file_name}" ] && [ ! -f ".pig/object/commit/${last_commit_id}/${actual_file_name}" ]
+	then
+		diff_index_actual=$(diff "${actual_file}" ".pig/object/file/${actual_file_name}")
+		if [ -n "${diff_index_actual}" ]
+		then
+			echo "${actual_file_name} - added to index, file changed" >> "${tmp_ans}"
+		else
+			echo "${actual_file_name} - added to index" >> "${tmp_ans}"
+		fi
+	elif [ -f ".pig/object/file/${actual_file_name}" ] && [  -f ".pig/object/commit/${last_commit_id}/${actual_file_name}" ]
+	then
+		diff_index_actual=$(diff "${actual_file}" ".pig/object/file/${actual_file_name}")
+		diff_index_commit=$(diff ".pig/object/commit/${last_commit_id}/${actual_file_name}" ".pig/object/file/${actual_file_name}")
+		if [ -n "${diff_index_actual}" ] && [ -n "${diff_index_commit}" ]
+		then
+			echo "${actual_file_name} - file changed, different changes staged for commit" >> "${tmp_ans}"
+		elif [ -z "${diff_index_actual}" ] && [ -n "${diff_index_commit}" ]
+		then
+			echo "${actual_file_name} - file changed, changes staged for commit" >> "${tmp_ans}"
+		elif [ -n "${diff_index_actual}" ] && [ -z "${diff_index_commit}" ]
+		then 
+			echo "${actual_file_name} - file changed, changes not staged for commit" >> "${tmp_ans}"
+		else
+			echo "${actual_file_name} - same as repo" >> "${tmp_ans}"
+		fi
+	elif [ ! -f ".pig/object/file/${actual_file_name}" ] && [  -f ".pig/object/commit/${last_commit_id}/${actual_file_name}" ]
+	then
+		echo "${actual_file_name} - deleted from index" >> "${tmp_ans}"
+	else
+		echo "${actual_file_name} - untracked" >> "${tmp_ans}"
+	fi
+done < "${tmp_actual}"
+
+while IFS= read -r index_file
+do
+	index_file_name=$(basename "${index_file}")
+	if [ ! -f "${index_file_name}" ] && [ ! -f ".pig/object/commit/${last_commit_id}/${index_file_name}" ]
+	then
+		echo "${index_file_name} - added to index, file deleted" >> "${tmp_ans}"
+	elif [ ! -f "${index_file_name}" ] && [ -f ".pig/object/commit/${last_commit_id}/${index_file_name}" ]
+	then
+		is_index_list=$(grep "${index_file_name}" ".pig/index")
+		diff_index_commit=$(diff ".pig/object/commit/${last_commit_id}/${index_file_name}" "${index_file}")
+		if [ -z "${is_index_list}" ]
+		then
+			echo "${index_file_name} - file deleted, deleted from index" >> "${tmp_ans}"
+		elif [ -z "${diff_index_commit}" ]
+		then
+			echo "${index_file_name} - file deleted" >> "${tmp_ans}"
+		else
+			#echo "${index_file_name} - file deleted, different changes staged for commit" >> "${tmp_ans}"
+			echo "${index_file_name} - file deleted" >> "${tmp_ans}"
+		fi
+	fi
+done < "${tmp_index}"
+
+if [ -d ".pig/object/commit/0" ]
+then
+	while IFS= read -r commit_file
+	do
+		commit_file_name=$(basename "${commit_file}")
+		if [ ! -f ".pig/object/file/${commit_file_name}" ] && [ ! -f "${commit_file_name}" ]
+		then
+			echo "${commit_file_name} - file deleted, deleted from index" >> "${tmp_ans}"
+		fi
+	done < "${tmp_commit}"
+fi
+
+LC_ALL=C sort "${tmp_ans}" 
+exit 0

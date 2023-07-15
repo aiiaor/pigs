@@ -1,0 +1,30 @@
+#!/bin/dash
+
+tmp=$(mktemp)
+trap 'rm ${tmp}' INT HUP QUIT TERM EXIT
+branch=$(cat ".pig/HEAD")
+if [ ! -d ".pig" ]
+then
+	echo "$0: error: pigs repository directory .pig not found"
+	exit 1
+fi
+
+if [ ! -d ".pig/object/commit/0" ]
+then
+	exit 0
+fi
+
+
+
+for commit_path in .pig/object/commit/* 
+do
+	branch_in_file=$(grep "branch: ${branch}" "${commit_path}/commit_info")
+	if [ -n "${branch_in_file}" ]
+	then
+		val=$(cut -f1,3 -d'|' "${commit_path}/commit_info" | tr '|' ' ' | head -n 1)
+		echo "${val}" >> "${tmp}"
+	fi
+done
+
+sort -rn "${tmp}"
+exit 0

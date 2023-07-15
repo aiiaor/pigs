@@ -1,0 +1,27 @@
+#!/bin/dash
+
+if test -d ".pig"
+then
+	echo "$0: error: .pig already exists"
+	exit 1
+else
+	echo "Initialized empty pigs repository in .pig"
+	mkdir ".pig"
+	cd ".pig" || exit 1
+
+# CREATE OBJECT
+	mkdir "object"
+	cd "object" || exit 1
+	mkdir "file"
+	mkdir "commit" 
+	cd .. || exit 1
+
+# CREATE HEAD FILE
+	echo "master">HEAD
+# CREATE BRANCHES
+	mkdir "branches"
+	cd "branches" || exit 1
+	echo "master" > "info"
+	cd .. || exit 1	
+	exit 0
+fi

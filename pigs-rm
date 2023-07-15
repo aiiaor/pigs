@@ -1,0 +1,210 @@
+#!/bin/dash
+
+if [ ! -d ".pig" ]
+then
+	echo "$0: error: pigs repository directory .pig not found"
+	exit 1
+fi
+
+
+
+#CHECK OPTIONS
+cached_flag=0
+force_flag=0
+
+for val in "$@"
+do
+	if [ "${val}" = "--cached" ]
+	then
+		cached_flag=1
+	elif [ "${val}" = "--force" ]
+	then
+		force_flag=1
+	fi
+done
+
+current_branch=$(cat ".pig/HEAD")
+
+#GET LAST COMMIT FILES
+if [ -d ".pig/object/commit/0" ]
+then
+	last_commit_id=0
+	for commit_path in .pig/object/commit/* 
+	do
+		val=$(cut -f1 -d'|' "${commit_path}/commit_info"|head -n 1)
+		is_branch_exist=$(grep "branch: ${current_branch}" "${commit_path}/commit_info")
+		if [ "${last_commit_id}" -lt "${val}" ] && [ -n "${is_branch_exist}" ]
+		then
+			last_commit_id=${val}
+		fi
+	done
+	tmp_commit=$(mktemp)
+	trap 'rm ${tmp_commit}' INT HUP QUIT TERM EXIT
+
+	for file in .pig/object/commit/"${last_commit_id}"/*
+	do
+		file_name=$(basename "${file}")
+	    if [ "${file_name}" != "commit_info" ]
+	    then
+	    	echo "${file}" >> "${tmp_commit}"
+	    fi
+	done
+fi
+
+#GET ACTUAL FILE
+tmp_actual=$(mktemp)
+trap 'rm ${tmp_actual}' INT HUP QUIT TERM EXIT
+
+for file in *
+do
+    echo "${file}" >> "${tmp_actual}"
+done
+
+#GET INDEX FILES
+tmp_index=$(mktemp)
+tmp_index_2=$(mktemp)
+trap 'rm ${tmp_index}' INT HUP QUIT TERM EXIT
+trap 'rm ${tmp_index_2}' INT HUP QUIT TERM EXIT
+for file in .pig/object/file/*
+do
+    echo "${file}" >> "${tmp_index}"
+done
+
+#CHECK ERROR FOR ALL FILE
+for val in "$@"
+do
+	if [ "${val}" = "--cached" ]
+	then
+		continue
+	elif [ "${val}" = "--force" ]
+	then
+		continue
+	fi
+
+	if [ ${cached_flag} -eq 0 ] && [ ${force_flag} -eq 0 ]
+	then
+		if [ -f ".pig/object/file/${val}" ] && [ -f ".pig/object/commit/${last_commit_id}/${val}" ]
+		then
+			diff_actual_index=$(diff "${val}" ".pig/object/file/${val}")
+			diff_index_commit=$(diff ".pig/object/commit/${last_commit_id}/${val}" ".pig/object/file/${val}")
+			if [ -n "${diff_actual_index}" ] && [ -z "${diff_index_commit}" ]
+			then
+				echo "$0: error: '${val}' in the repository is different to the working file"
+				exit 1
+			elif [ -n "${diff_actual_index}" ] && [ -n "${diff_index_commit}" ]
+			then
+				echo "$0: error: '${val}' in index is different to both the working file and the repository"
+				exit 1
+			elif [ -z "${diff_actual_index}" ] && [ -n "${diff_index_commit}" ]
+			then
+				echo "$0: error: '${val}' has staged changes in the index"
+				exit 1
+			fi
+		elif [ -f ".pig/object/file/${val}" ] && [ ! -f ".pig/object/commit/${last_commit_id}/${val}" ]
+		then
+			echo "$0: error: '${val}' has staged changes in the index"
+			exit 1
+		else
+			echo "$0: error: '${val}' is not in the pigs repository"
+			exit 1
+		fi
+	elif [ ${cached_flag} -eq 0 ] && [ ${force_flag} -eq 1 ]
+	then
+		if [ ! -f ".pig/object/file/${val}" ]
+		then
+			echo "$0: error: '${val}' is not in the pigs repository"
+			exit 1
+		fi
+	elif [ ${cached_flag} -eq 1 ]
+	then
+		if [ -f "${val}" ] && [ -f  ".pig/object/file/${val}" ]
+		then 
+			diff_actual_index=$(diff "${val}" ".pig/object/file/${val}")
+		fi
+		if [ -f ".pig/object/commit/${last_commit_id}/${val}" ] && [ -f  ".pig/object/file/${val}" ]
+		then
+			diff_index_commit=$(diff ".pig/object/commit/${last_commit_id}/${val}" ".pig/object/file/${val}")
+		fi
+		if [ -n "${diff_actual_index}" ] && [ -n "${diff_index_commit}" ] && [ ${force_flag} -eq 0 ]
+		then
+			echo "$0: error: '${val}' in index is different to both the working file and the repository"
+			exit 1
+		fi
+		if [ ! -f ".pig/object/file/${val}" ]
+		then
+			echo "$0: error: '${val}' is not in the pigs repository"
+			exit 1
+		fi
+	fi
+done
+
+#EXECUTE RM
+for val in "$@"
+do
+	if [ "${val}" = "--cached" ]
+	then
+		continue
+	elif [ "${val}" = "--force" ]
+	then
+		continue
+	fi
+
+	if [ ${cached_flag} -eq 0 ] && [ ${force_flag} -eq 0 ]
+	then
+		if [ -f ".pig/object/file/${val}" ] && [ -f ".pig/object/commit/${last_commit_id}/${val}" ]
+		then
+			while IFS= read -r file
+			do
+				file_name=$(basename "${file}")
+				if [ "${file_name}" != "${val}" ]
+			    then
+			    	echo "${file_name}" >> "${tmp_index_2}"
+			    fi
+			done < "${tmp_index}"
+			cp "${tmp_index_2}" "${tmp_index}"
+			cp "${tmp_index}" ".pig/index"
+			rm -f "${val}"
+		fi
+	elif [ ${cached_flag} -eq 0 ] && [ ${force_flag} -eq 1 ]
+	then
+		if [ -f ".pig/object/file/${val}" ]
+		then
+			while IFS= read -r file
+			do
+				file_name=$(basename "${file}")
+				if [ "${file_name}" != "${val}" ]
+			    then
+			    	echo "${file_name}" >> "${tmp_index_2}"
+			    fi
+			done < "${tmp_index}"
+			cp "${tmp_index_2}" "${tmp_index}"
+			cp "${tmp_index}" ".pig/index"
+			rm -f ".pig/object/file/${val}"
+			rm -f "${val}"
+		else
+			echo "$0: error: '${val}' is not in the pigs repository"
+			exit 1
+		fi
+	elif [ ${cached_flag} -eq 1 ]
+	then
+		if [ -f ".pig/object/file/${val}" ]
+		then
+			while IFS= read -r file
+			do
+				file_name=$(basename "${file}")
+				if [ "${file_name}" != "${val}" ]
+			    then
+			    	echo "${file_name}" >> "${tmp_index_2}"
+			    fi
+			done < "${tmp_index}"
+			cp "${tmp_index_2}" "${tmp_index}"
+			cp "${tmp_index}" ".pig/index"
+			rm -f ".pig/object/file/${val}"
+		else
+			echo "$0: error: '${val}' is not in the pigs repository"
+			exit 1
+		fi
+	fi
+done
+
+exit 0

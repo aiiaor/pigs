@@ -1,0 +1,131 @@
+#!/bin/dash
+
+current_path=$(pwd)
+PATH="$PATH:${current_path}"
+
+tmp_commit_info=$(mktemp)
+trap 'rm ${tmp_commit_info}' INT HUP QUIT TERM EXIT
+
+tmp_branch_info=$(mktemp)
+trap 'rm ${tmp_branch_info}' INT HUP QUIT TERM EXIT
+
+#Check repository
+if [ ! -d ".pig" ]
+then
+	echo "$0: error: pigs repository directory .pig not found"
+	exit 1
+fi
+
+#Check input
+if [ "$#" -gt 1 ]
+then
+	echo "usage: pigs-checkout <branch>"
+	exit 1
+fi
+
+#Check commit
+if [ ! -d ".pig/object/commit/0" ]
+then
+	echo "$0: error: this command can not be run until after the first commit"
+	exit 1
+fi
+
+commit_id=0
+
+current_branch=$(cat ".pig/HEAD")
+branch="$1"
+
+#check is branch exist
+is_branch_exist=$(grep "${branch}" ".pig/branches/info")
+if [ -z "${is_branch_exist}" ] 
+then
+	echo "$0: error: unknown branch '${branch}'"
+	exit 1
+fi
+
+#Is checkouted branch same as current branch 
+if [ "${current_branch}" = "${branch}" ]
+then
+	echo "Already on '${branch}'"
+	exit 0
+fi
+
+
+
+new_branch_commit_id=0
+
+while test -d ".pig/object/commit/${commit_id}"
+do
+	is_contain_branch=$(grep "branch: ${branch}" ".pig/object/commit/${commit_id}/commit_info")
+	if [ -n "${is_contain_branch}" ] && [ "${new_branch_commit_id}" -lt "${commit_id}" ]
+	then
+		new_branch_commit_id="${commit_id}"
+	fi
+	commit_id=$((commit_id+1))
+done
+
+old_branch_commit_id=0
+commit_id=0
+while test -d ".pig/object/commit/${commit_id}"
+do
+	is_contain_branch=$(grep "branch: ${current_branch}" ".pig/object/commit/${commit_id}/commit_info")
+	if [ -n "${is_contain_branch}" ] && [ "${old_branch_commit_id}" -lt "${commit_id}" ]
+	then
+		old_branch_commit_id="${commit_id}"
+	fi
+	commit_id=$((commit_id+1))
+done
+
+
+
+
+#Remove file specific in old branch
+file_list=$(find "." -maxdepth 1 -type f  ! -name 'pigs*' ! -name 'test*.sh')
+for file in ${file_list}
+do
+	file_name=$(basename "${file}")
+
+	if [ ! -f ".pig/object/commit/${new_branch_commit_id}/${file_name}" ] && [ -f ".pig/object/commit/${old_branch_commit_id}/${file_name}" ]
+	then
+		rm -f "${file_name}"
+		rm -f ".pig/object/file/${file_name}"
+	fi
+done
+
+#Add file from new branch to workspace
+file_list=$(find ".pig/object/commit/${new_branch_commit_id}" -maxdepth 1 -type f  ! -name 'commit_info')
+for file in ${file_list}
+do
+	file_name=$(basename "${file}")
+	if [ -f "${file_name}" ] && [ -f ".pig/object/commit/${old_branch_commit_id}/${file_name}" ]
+	then
+		diff_index=$(diff ".pig/object/file/${file_name}" ".pig/object/commit/${old_branch_commit_id}/${file_name}")
+		diff_old=$(diff "${file_name}" ".pig/object/commit/${old_branch_commit_id}/${file_name}")
+		if [ -z "${diff_index}" ] && [ -z "${diff_old}" ]
+		then
+			cp -f ".pig/object/commit/${new_branch_commit_id}/${file_name}" "${file_name}"
+			cp -f ".pig/object/commit/${new_branch_commit_id}/${file_name}" ".pig/object/file/${file_name}"
+		fi
+		if [ -n "${diff_old}" ]
+		then
+			continue
+		fi
+	elif [ -f "${file_name}" ] && [ ! -f ".pig/object/commit/${old_branch_commit_id}/${file_name}" ]
+	then
+		diff_new=$(diff "${file_name}" ".pig/object/commit/${new_branch_commit_id}/${file_name}")
+		if [ -n "${diff_new}" ]
+		then
+			echo "$0: error: Your changes to the following files would be overwritten by checkout:"
+			echo "${file_name}"
+			exit 1
+		fi
+	else
+		cp -f ".pig/object/commit/${new_branch_commit_id}/${file_name}" "${file_name}"
+		cp -f ".pig/object/commit/${new_branch_commit_id}/${file_name}" ".pig/object/file/${file_name}"
+	fi
+done
+#SWITCH BRANCH
+echo "${branch}">".pig/HEAD"
+echo "Switched to branch '${branch}'"
+
+exit 0
